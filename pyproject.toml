@@ -50,8 +50,17 @@ Repository = "https://github.com/cjckris/attensi-risk-tool"
 Documentation = "https://github.com/cjckris/attensi-risk-tool#readme"
 "Bug Tracker" = "https://github.com/cjckris/attensi-risk-tool/issues"
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+
 [tool.uv]
 package = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
 
 [build-system]
 requires = ["hatchling"]
