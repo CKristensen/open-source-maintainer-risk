@@ -33,7 +33,12 @@ uv sync
 ```
 
 ### Quick setup
+
 ```bash
+# Option A: Set your GitHub token as an environment variable
+export GITHUB_TOKEN=ghp_your_token_here
+# Requires Libraries.io API key (free at https://libraries.io/api)
+export LIBRARIES_IO_API_KEY=your_key_here
 sh parallel_scan.sh
 uv run risk-tool explore
 ```
@@ -45,6 +50,8 @@ uv run risk-tool explore
 ```bash
 # Option A: Set your GitHub token as an environment variable
 export GITHUB_TOKEN=ghp_your_token_here
+# Requires Libraries.io API key (free at https://libraries.io/api)
+export LIBRARIES_IO_API_KEY=your_key_here
 
 # Option B: Pass token directly (overrides env var)
 uv run risk-tool scan --token ghp_your_token --query "org:facebook" --limit 50
