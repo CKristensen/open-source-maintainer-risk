@@ -226,7 +226,7 @@ class RiskExplorer(App):
         table.add_column("Gini", key="gini", width=8)
         table.add_column("Top1%", key="top1", width=8)
         table.add_column("Top3%", key="top3", width=8)
-        table.add_column("Contribs", key="contrib", width=10)
+        table.add_column("Contributors", key="contrib", width=10)
         table.add_column("Commits(1Y)", key="commits", width=11)
         table.add_column("Recent(3M)", key="recent", width=11)
     
@@ -253,7 +253,7 @@ class RiskExplorer(App):
             top3 = row.get('top3_share')
             top3_str = f"{top3:.0%}" if top3 is not None else "N/A"
             contrib = row.get('contributor_count')
-            contrib_str = str(contrib) if contrib is not None else "?"
+            contrib_str = (str(contrib) if int(contrib) != 100 else ">100") if contrib is not None else "?" 
             
             table.add_row(
                 row.get("repo", "?"),
