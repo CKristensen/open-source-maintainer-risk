@@ -160,30 +160,48 @@ async def _scan_async(token: str, limit: int, query: str):
     # 5. Export to SQLite (append mode, skip duplicates by repo name)
     import sqlite3
     output_path = "risk_report.db"
-    conn = sqlite3.connect(output_path)
+    
+    # Use WAL mode for better concurrent access (multiple scans can run in parallel)
+    conn = sqlite3.connect(output_path, timeout=30.0)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")  # Wait up to 30s for locks
     
     # Use INSERT OR REPLACE to update existing repos (repo as unique key)
     pdf = df.to_pandas()
     pdf["updated_at"] = pd.Timestamp.now()
-    pdf.to_sql("risk_report_temp", conn, if_exists="replace", index=False)
     
-    # Create main table from temp if it doesn't exist
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS risk_report AS 
-        SELECT * FROM risk_report_temp WHERE 0
-    """)
+    # Retry logic for concurrent writes
+    max_retries = 5
+    for attempt in range(max_retries):
+        try:
+            pdf.to_sql("risk_report_temp", conn, if_exists="replace", index=False)
+            
+            # Create main table from temp if it doesn't exist
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS risk_report AS 
+                SELECT * FROM risk_report_temp WHERE 0
+            """)
+            
+            # Add unique index on repo if not exists
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_repo ON risk_report(repo)")
+            
+            # Insert or replace
+            cols = ", ".join(pdf.columns)
+            conn.execute(f"""
+                INSERT OR REPLACE INTO risk_report ({cols})
+                SELECT {cols} FROM risk_report_temp
+            """)
+            conn.execute("DROP TABLE risk_report_temp")
+            conn.commit()
+            break
+        except sqlite3.OperationalError as e:
+            if "locked" in str(e).lower() and attempt < max_retries - 1:
+                import time
+                console.print(f"[yellow]Database busy, retrying ({attempt + 1}/{max_retries})...[/yellow]")
+                time.sleep(1.0 * (attempt + 1))  # Exponential backoff
+            else:
+                raise
     
-    # Add unique index on repo if not exists
-    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_repo ON risk_report(repo)")
-    
-    # Insert or replace
-    cols = ", ".join(pdf.columns)
-    conn.execute(f"""
-        INSERT OR REPLACE INTO risk_report ({cols})
-        SELECT {cols} FROM risk_report_temp
-    """)
-    conn.execute("DROP TABLE risk_report_temp")
-    conn.commit()
     conn.close()
     console.print(f"\n[dim]Full dataset saved to {output_path} (table: risk_report)[/dim]")
 
