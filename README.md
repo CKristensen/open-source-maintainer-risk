@@ -67,7 +67,8 @@ uv run risk-tool explore
 ## 🖥️ Explorer TUI
 
 A k9s-style terminal UI for exploring your risk database:
-<img width="3123" height="1737" alt="image" src="https://github.com/user-attachments/assets/f488aa9e-8d00-4aae-a574-cd3ca5ee37c6" />
+<img width="3069" height="2244" alt="image" src="https://github.com/user-attachments/assets/5130edc9-5ab1-4725-accf-7719afc7826f" />
+
 
 
 ### Keybindings
