@@ -20,7 +20,14 @@ HELP_TEXT = """\
 
 [bold]Search & Filter:[/]
   [yellow]/[/]          Focus search box
+  [yellow]:[/]          Command mode (filter by registry)
   [yellow]Escape[/]     Clear search, return to table
+
+[bold]Commands (k9s style):[/]
+  [yellow]:npm[/]       Show only NPM packages
+  [yellow]:pypi[/]      Show only PyPI packages
+  [yellow]:maven[/]     Show only Maven packages
+  [yellow]:all[/]       Show all packages (clear filter)
 
 [bold]Sorting:[/]
   [yellow]s[/]          Sort by risk score
@@ -38,8 +45,9 @@ HELP_TEXT = """\
   [yellow]q[/]          Quit
 
 [bold cyan]Risk Metrics Explained:[/]
-  [yellow]Source[/]        Where the repo was found (NPM, GH = GitHub search)
-  [yellow]Downloads[/]     Weekly package downloads (if from registry)
+  [yellow]Source[/]        Where the repo was found (NPM, PYPI, MAVEN, GH = GitHub search)
+  [yellow]Downloads[/]     Weekly package downloads (NPM/PyPI only)
+  [yellow]Dependents[/]    Number of dependent packages (Maven only, from Libraries.io)
   [yellow]Risk Score[/]    Combined score (higher = riskier)
   [yellow]Velocity[/]      Recent vs older commits (>1x = growing)
   [yellow]Gini[/]          Contribution inequality (0-1, higher = concentrated)
@@ -148,6 +156,7 @@ class RiskExplorer(App):
         Binding("q", "quit", "Quit"),
         Binding("question_mark", "show_help", "Help"),
         Binding("/", "focus_search", "Search"),
+        Binding("colon", "focus_command", "Command"),
         Binding("escape", "clear_search", "Clear"),
         Binding("r", "refresh", "Refresh"),
         Binding("d", "toggle_detail", "Details"),
@@ -170,12 +179,13 @@ class RiskExplorer(App):
         self.total_db_rows = 0
         self.sort_column = "total_risk_score"
         self.sort_reverse = True
+        self.registry_filter = None  # None = all, or "npm", "pypi", "maven"
     
     def compose(self) -> ComposeResult:
         yield Header()
         yield Static("", id="stats")
         yield Horizontal(
-            Input(placeholder="Type to filter repos... (press / to focus, ? for help)", id="search-input"),
+            Input(placeholder="Type to filter... (/ search, : command, ? help)", id="search-input"),
             id="search-box"
         )
         yield DataTable(id="table")
@@ -226,6 +236,7 @@ class RiskExplorer(App):
         table.add_column("Lang", key="lang", width=12)
         table.add_column("Source", key="source", width=6)
         table.add_column("Downloads", key="downloads", width=10)
+        table.add_column("Dependents", key="dependents", width=10)
         table.add_column("Risk", key="score", width=6)
         table.add_column("Level", key="level", width=10)
         table.add_column("Velocity", key="velocity", width=10)
@@ -257,9 +268,16 @@ class RiskExplorer(App):
             contrib = row.get('contributor_count')
             contrib_str = (str(contrib) if int(contrib) != 100 else ">100") if contrib is not None else "?"
             
-            # Format downloads (weekly)
+            # Source (registry)
+            registry = row.get('registry')
+            source_str = registry.upper() if registry else "GH"
+            
+            # Format downloads (weekly) - only for NPM/PyPI
             downloads = row.get('weekly_downloads')
-            if downloads is not None and downloads > 0:
+            if registry == 'maven':
+                # Maven doesn't have download stats, show dash
+                dl_str = "-"
+            elif downloads is not None and downloads > 0:
                 if downloads >= 1_000_000:
                     dl_str = f"{downloads / 1_000_000:.1f}M"
                 elif downloads >= 1_000:
@@ -269,15 +287,23 @@ class RiskExplorer(App):
             else:
                 dl_str = "-"
             
-            # Source (registry)
-            registry = row.get('registry')
-            source_str = registry.upper() if registry else "GH"
+            # Format dependents - only for Maven (stored in weekly_downloads for Maven)
+            if registry == 'maven' and downloads is not None and downloads > 0:
+                if downloads >= 1_000_000:
+                    dep_str = f"{downloads / 1_000_000:.1f}M"
+                elif downloads >= 1_000:
+                    dep_str = f"{downloads / 1_000:.0f}K"
+                else:
+                    dep_str = str(downloads)
+            else:
+                dep_str = "-"
             
             table.add_row(
                 row.get("repo", "?"),
                 row.get("language", "?"),
                 source_str,
                 dl_str,
+                dep_str,
                 f"{row.get('total_risk_score', 0):.1f}",
                 level_styled,
                 f"{row.get('velocity_ratio', 0):.2f}x",
@@ -293,8 +319,11 @@ class RiskExplorer(App):
         showing = len(self.filtered_data)
         critical = sum(1 for r in self.filtered_data if r.get("risk_level") == "CRITICAL")
         high = sum(1 for r in self.filtered_data if r.get("risk_level") == "HIGH")
+        
+        filter_str = f"[cyan]{self.registry_filter.upper()}[/cyan]" if self.registry_filter else "ALL"
+        
         stats.update(
-            f" DB Total: {self.total_db_rows} | Showing: {showing} | "
+            f" DB Total: {self.total_db_rows} | Filter: {filter_str} | Showing: {showing} | "
             f"[red]CRITICAL: {critical}[/red] | [orange1]HIGH: {high}[/orange1] | "
             f"Sort: {self.sort_column} ({'desc' if self.sort_reverse else 'asc'})"
         )
@@ -311,15 +340,44 @@ class RiskExplorer(App):
     
     def on_input_changed(self, event: Input.Changed) -> None:
         """Filter table when search input changes."""
-        search = event.value.lower().strip()
-        if search:
+        search = event.value.strip()
+        
+        # Handle command mode (:npm, :pypi, :maven, :all)
+        if search.startswith(":"):
+            cmd = search[1:].lower()
+            if cmd in ("npm", "pypi", "maven"):
+                self.registry_filter = cmd
+                self.filtered_data = [
+                    r for r in self.all_data
+                    if r.get("registry") == cmd
+                ]
+                self.refresh_table()
+                return
+            elif cmd == "all":
+                self.registry_filter = None
+                self.filtered_data = self.all_data.copy()
+                self.refresh_table()
+                return
+            # Don't filter while typing command
+            return
+        
+        # Regular search filtering
+        search_lower = search.lower()
+        
+        # Start with all data or registry-filtered data
+        if self.registry_filter:
+            base_data = [r for r in self.all_data if r.get("registry") == self.registry_filter]
+        else:
+            base_data = self.all_data
+        
+        if search_lower:
             self.filtered_data = [
-                r for r in self.all_data
-                if search in r.get("repo", "").lower()
-                or search in r.get("risk_level", "").lower()
+                r for r in base_data
+                if search_lower in r.get("repo", "").lower()
+                or search_lower in r.get("risk_level", "").lower()
             ]
         else:
-            self.filtered_data = self.all_data.copy()
+            self.filtered_data = base_data.copy()
         self.refresh_table()
     
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
@@ -378,10 +436,19 @@ class RiskExplorer(App):
         """Focus the search input."""
         self.query_one("#search-input", Input).focus()
     
+    def action_focus_command(self) -> None:
+        """Focus the search input with : prefix for command mode."""
+        search_input = self.query_one("#search-input", Input)
+        search_input.value = ":"
+        search_input.focus()
+        # Move cursor to end
+        search_input.cursor_position = len(search_input.value)
+    
     def action_clear_search(self) -> None:
         """Clear search and reset filter."""
         search_input = self.query_one("#search-input", Input)
         search_input.value = ""
+        self.registry_filter = None
         self.filtered_data = self.all_data.copy()
         self.refresh_table()
         self.query_one("#table", DataTable).focus()
@@ -390,12 +457,23 @@ class RiskExplorer(App):
         """Reload data from database."""
         self.load_data()
         search_input = self.query_one("#search-input", Input)
-        if search_input.value:
+        
+        # Apply registry filter first
+        if self.registry_filter:
+            base_data = [r for r in self.all_data if r.get("registry") == self.registry_filter]
+        else:
+            base_data = self.all_data
+        
+        # Then apply text search if any
+        if search_input.value and not search_input.value.startswith(":"):
             search = search_input.value.lower().strip()
             self.filtered_data = [
-                r for r in self.all_data
+                r for r in base_data
                 if search in r.get("repo", "").lower()
             ]
+        else:
+            self.filtered_data = base_data.copy()
+        
         self.refresh_table()
         self.notify("Data refreshed!")
     

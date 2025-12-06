@@ -1,6 +1,7 @@
 import typer
 import asyncio
 import os
+from typing import Optional
 import pandas as pd
 from rich.console import Console
 from rich.table import Table
@@ -8,7 +9,7 @@ from rich import print
 from src.ingestion import GitHubClient
 from src.processing import compute_risk_metrics
 from src.explorer import run_explorer
-from src.npm_client import NPMClient
+from src.npm_client import NPMClient, PyPIClient, MavenClient
 
 app = typer.Typer()
 console = Console()
@@ -295,6 +296,363 @@ async def _scan_npm_async(token: str, limit: int, min_downloads: int, use_cache:
     
     # 8. Export to SQLite
     _export_to_sqlite(df, "risk_report.db")
+
+
+@app.command("scan-pypi")
+def scan_pypi(
+    token: str = typer.Option(..., envvar="GITHUB_TOKEN", help="GitHub PAT"),
+    limit: int = typer.Option(1000, help="Number of top PyPI packages to scan"),
+    min_downloads: int = typer.Option(100000, help="Minimum monthly downloads filter"),
+    no_cache: bool = typer.Option(False, help="Skip cache and fetch fresh data from PyPI"),
+):
+    """
+    Scan top PyPI packages for maintainer risk.
+    
+    Fetches the most popular Python packages by downloads (using top-pypi-packages dataset),
+    maps them to their GitHub repositories, and analyzes maintainer risk.
+    
+    Note: Packages without a GitHub repository are skipped.
+    """
+    asyncio.run(_scan_pypi_async(token, limit, min_downloads, use_cache=not no_cache))
+
+
+async def _scan_pypi_async(token: str, limit: int, min_downloads: int, use_cache: bool = True):
+    """Async implementation of the scan-pypi command."""
+    pypi_client = PyPIClient()
+    github_client = GitHubClient(token)
+    
+    try:
+        # 1. Fetch popular PyPI packages
+        packages = await pypi_client.search_popular_packages(
+            max_results=limit,
+            use_cache=use_cache
+        )
+        
+        if not packages:
+            console.print("[red]No PyPI packages found.[/red]")
+            return
+        
+        # 2. Filter to GitHub-hosted packages
+        filtered_packages, skipped_count = pypi_client.filter_github_packages(
+            packages, 
+            min_downloads=min_downloads
+        )
+        
+        if skipped_count > 0:
+            console.print(f"[yellow]Skipped {skipped_count} packages (no GitHub repo or below {min_downloads:,} monthly downloads)[/yellow]")
+        
+        if not filtered_packages:
+            console.print("[red]No packages with GitHub repositories found.[/red]")
+            return
+        
+        # 3. Convert to repo list format for GitHubClient
+        repo_list = pypi_client.to_repo_list(filtered_packages)
+        console.print(f"[bold blue]Scanning {len(repo_list)} PyPI packages (from {len(packages)} total)...[/bold blue]")
+        
+        # Create a mapping of repo -> package info for enrichment
+        repo_to_package = {
+            r["name"]: {
+                "package_name": r.get("package_name"),
+                "weekly_downloads": r.get("weekly_downloads", 0),
+                "registry": r.get("registry", "pypi"),
+            }
+            for r in repo_list
+        }
+        
+        # 4. Fetch GitHub stats
+        results = await github_client.fetch_batch(repo_list)
+        
+        # 5. Enrich results with PyPI package info
+        for result in results:
+            repo_name = result.get("repo")
+            if repo_name in repo_to_package:
+                result["package_name"] = repo_to_package[repo_name]["package_name"]
+                result["weekly_downloads"] = repo_to_package[repo_name]["weekly_downloads"]
+                result["registry"] = repo_to_package[repo_name]["registry"]
+        
+    finally:
+        await pypi_client.close()
+        await github_client.close()
+    
+    # 6. Process and compute risk metrics
+    df = compute_risk_metrics(results)
+    
+    if df.is_empty():
+        console.print("[red]No valid data to process.[/red]")
+        return
+    
+    # 7. Display results
+    _display_pypi_results(df)
+    
+    # 8. Export to SQLite
+    _export_to_sqlite(df, "risk_report.db")
+
+
+def _display_pypi_results(df):
+    """Display PyPI scan results in a rich table."""
+    table = Table(title="PyPI Package Maintainer Risk Report")
+    
+    table.add_column("Package", style="cyan", no_wrap=True)
+    table.add_column("Repository", style="dim")
+    table.add_column("Downloads/mo", justify="right")
+    table.add_column("Risk", justify="right")
+    table.add_column("Level", justify="center")
+    table.add_column("Velocity", justify="right")
+    table.add_column("Gini", justify="right")
+    table.add_column("Top 1", justify="right")
+    table.add_column("Contribs", justify="right")
+    
+    # Take top 30 riskiest
+    top_risk = df.head(30)
+    
+    for row in top_risk.iter_rows(named=True):
+        # Color coding the output based on risk level
+        level_color = "green"
+        if row["risk_level"] == "CRITICAL":
+            level_color = "red bold"
+        elif row["risk_level"] == "HIGH":
+            level_color = "orange1"
+        elif row["risk_level"] == "MEDIUM":
+            level_color = "yellow"
+        
+        # Check if we have valid contributor data
+        has_contributor_data = row.get("contributor_data_available", False) or (
+            row["contributor_count"] is not None and 
+            row["gini_coefficient"] is not None
+        )
+        
+        # Format Gini
+        if has_contributor_data and row["gini_coefficient"] is not None:
+            gini = row["gini_coefficient"]
+            gini_color = "green" if gini < 0.5 else "yellow" if gini < 0.75 else "red"
+            gini_str = f"[{gini_color}]{gini:.2f}[/{gini_color}]"
+            top1_str = f"{row['top1_share']:.0%}" if row['top1_share'] is not None else "[dim]N/A[/dim]"
+            contrib_str = str(row["contributor_count"]) if row["contributor_count"] is not None else "[dim]?[/dim]"
+        else:
+            gini_str = "[dim]N/A[/dim]"
+            top1_str = "[dim]N/A[/dim]"
+            contrib_str = "[dim]?[/dim]"
+        
+        # Package name and repo link
+        package_name = row.get("package_name", "")
+        repo_name = row["repo"]
+        repo_url = f"https://github.com/{repo_name}"
+        repo_link = f"[link={repo_url}]{repo_name}[/link]"
+        
+        # Format downloads (monthly for PyPI)
+        downloads = row.get("weekly_downloads", 0)
+        if downloads >= 1_000_000_000:
+            dl_str = f"{downloads / 1_000_000_000:.1f}B"
+        elif downloads >= 1_000_000:
+            dl_str = f"{downloads / 1_000_000:.1f}M"
+        elif downloads >= 1_000:
+            dl_str = f"{downloads / 1_000:.0f}K"
+        else:
+            dl_str = str(downloads)
+        
+        table.add_row(
+            package_name or "[dim]?[/dim]",
+            repo_link,
+            dl_str,
+            f"{row['total_risk_score']:.1f}",
+            f"[{level_color}]{row['risk_level']}[/{level_color}]",
+            f"{row['velocity_ratio']:.2f}x",
+            gini_str,
+            top1_str,
+            contrib_str,
+        )
+    
+    console.print(table)
+    
+    # Legend
+    console.print("\n[bold]Legend:[/bold]")
+    console.print("[dim]• Downloads/mo: Monthly PyPI downloads (higher = more critical if risky)[/dim]")
+    console.print("[dim]• Velocity: Recent (13 wks) vs older (13 wks) commits. >1x = growing, <1x = declining[/dim]")
+    console.print("[dim]• Gini: Contribution inequality (0 = equal, 1 = one person). >0.75 = high concentration[/dim]")
+    console.print("[dim]• Top 1: % of commits by top contributor. >50% = bus factor risk[/dim]")
+
+
+@app.command("scan-maven")
+def scan_maven(
+    token: str = typer.Option(..., envvar="GITHUB_TOKEN", help="GitHub PAT"),
+    limit: int = typer.Option(500, help="Number of top Maven packages to scan"),
+    min_dependents: int = typer.Option(100, help="Minimum dependents count filter"),
+    no_cache: bool = typer.Option(False, help="Skip cache and fetch fresh data"),
+    api_key: str = typer.Option(None, envvar="LIBRARIES_IO_API_KEY", help="Libraries.io API key"),
+):
+    """
+    Scan top Maven packages for maintainer risk.
+    
+    Fetches the most popular Java/Kotlin packages by dependents count
+    (using Libraries.io API), maps them to their GitHub repositories,
+    and analyzes maintainer risk.
+    
+    Requires a Libraries.io API key (free at https://libraries.io/api).
+    Set via --api-key or LIBRARIES_IO_API_KEY environment variable.
+    
+    Note: Packages without a GitHub repository are skipped.
+    """
+    asyncio.run(_scan_maven_async(token, limit, min_dependents, use_cache=not no_cache, api_key=api_key))
+
+
+async def _scan_maven_async(
+    token: str, 
+    limit: int, 
+    min_dependents: int, 
+    use_cache: bool = True,
+    api_key: Optional[str] = None
+):
+    """Async implementation of the scan-maven command."""
+    maven_client = MavenClient(api_key=api_key)
+    github_client = GitHubClient(token)
+    
+    try:
+        # 1. Fetch popular Maven packages
+        packages = await maven_client.search_popular_packages(
+            max_results=limit,
+            use_cache=use_cache
+        )
+        
+        if not packages:
+            console.print("[red]No Maven packages found. Check your Libraries.io API key.[/red]")
+            return
+        
+        # 2. Filter to GitHub-hosted packages
+        filtered_packages, skipped_count = maven_client.filter_github_packages(
+            packages, 
+            min_downloads=min_dependents  # Uses dependents_count internally
+        )
+        
+        if skipped_count > 0:
+            console.print(f"[yellow]Skipped {skipped_count} packages (no GitHub repo or below {min_dependents:,} dependents)[/yellow]")
+        
+        if not filtered_packages:
+            console.print("[red]No packages with GitHub repositories found.[/red]")
+            return
+        
+        # 3. Convert to repo list format for GitHubClient
+        repo_list = maven_client.to_repo_list(filtered_packages)
+        console.print(f"[bold blue]Scanning {len(repo_list)} Maven packages (from {len(packages)} total)...[/bold blue]")
+        
+        # Create a mapping of repo -> package info for enrichment
+        repo_to_package = {
+            r["name"]: {
+                "package_name": r.get("package_name"),
+                "weekly_downloads": r.get("weekly_downloads", 0),  # Actually dependents_count
+                "registry": r.get("registry", "maven"),
+            }
+            for r in repo_list
+        }
+        
+        # 4. Fetch GitHub stats
+        results = await github_client.fetch_batch(repo_list)
+        
+        # 5. Enrich results with Maven package info
+        for result in results:
+            repo_name = result.get("repo")
+            if repo_name in repo_to_package:
+                result["package_name"] = repo_to_package[repo_name]["package_name"]
+                result["weekly_downloads"] = repo_to_package[repo_name]["weekly_downloads"]
+                result["registry"] = repo_to_package[repo_name]["registry"]
+        
+    finally:
+        await maven_client.close()
+        await github_client.close()
+    
+    # 6. Process and compute risk metrics
+    df = compute_risk_metrics(results)
+    
+    if df.is_empty():
+        console.print("[red]No valid data to process.[/red]")
+        return
+    
+    # 7. Display results
+    _display_maven_results(df)
+    
+    # 8. Export to SQLite
+    _export_to_sqlite(df, "risk_report.db")
+
+
+def _display_maven_results(df):
+    """Display Maven scan results in a rich table."""
+    table = Table(title="Maven Package Maintainer Risk Report")
+    
+    table.add_column("Package", style="cyan", no_wrap=True)
+    table.add_column("Repository", style="dim")
+    table.add_column("Dependents", justify="right")
+    table.add_column("Risk", justify="right")
+    table.add_column("Level", justify="center")
+    table.add_column("Velocity", justify="right")
+    table.add_column("Gini", justify="right")
+    table.add_column("Top 1", justify="right")
+    table.add_column("Contribs", justify="right")
+    
+    # Take top 30 riskiest
+    top_risk = df.head(30)
+    
+    for row in top_risk.iter_rows(named=True):
+        # Color coding the output based on risk level
+        level_color = "green"
+        if row["risk_level"] == "CRITICAL":
+            level_color = "red bold"
+        elif row["risk_level"] == "HIGH":
+            level_color = "orange1"
+        elif row["risk_level"] == "MEDIUM":
+            level_color = "yellow"
+        
+        # Check if we have valid contributor data
+        has_contributor_data = row.get("contributor_data_available", False) or (
+            row["contributor_count"] is not None and 
+            row["gini_coefficient"] is not None
+        )
+        
+        # Format Gini
+        if has_contributor_data and row["gini_coefficient"] is not None:
+            gini = row["gini_coefficient"]
+            gini_color = "green" if gini < 0.5 else "yellow" if gini < 0.75 else "red"
+            gini_str = f"[{gini_color}]{gini:.2f}[/{gini_color}]"
+            top1_str = f"{row['top1_share']:.0%}" if row['top1_share'] is not None else "[dim]N/A[/dim]"
+            contrib_str = str(row["contributor_count"]) if row["contributor_count"] is not None else "[dim]?[/dim]"
+        else:
+            gini_str = "[dim]N/A[/dim]"
+            top1_str = "[dim]N/A[/dim]"
+            contrib_str = "[dim]?[/dim]"
+        
+        # Package name and repo link
+        package_name = row.get("package_name", "")
+        repo_name = row["repo"]
+        repo_url = f"https://github.com/{repo_name}"
+        repo_link = f"[link={repo_url}]{repo_name}[/link]"
+        
+        # Format dependents count
+        dependents = row.get("weekly_downloads", 0)
+        if dependents >= 1_000_000:
+            dep_str = f"{dependents / 1_000_000:.1f}M"
+        elif dependents >= 1_000:
+            dep_str = f"{dependents / 1_000:.0f}K"
+        else:
+            dep_str = str(dependents)
+        
+        table.add_row(
+            package_name or "[dim]?[/dim]",
+            repo_link,
+            dep_str,
+            f"{row['total_risk_score']:.1f}",
+            f"[{level_color}]{row['risk_level']}[/{level_color}]",
+            f"{row['velocity_ratio']:.2f}x",
+            gini_str,
+            top1_str,
+            contrib_str,
+        )
+    
+    console.print(table)
+    
+    # Legend
+    console.print("\n[bold]Legend:[/bold]")
+    console.print("[dim]• Dependents: Number of packages depending on this (from Libraries.io)[/dim]")
+    console.print("[dim]• Velocity: Recent (13 wks) vs older (13 wks) commits. >1x = growing, <1x = declining[/dim]")
+    console.print("[dim]• Gini: Contribution inequality (0 = equal, 1 = one person). >0.75 = high concentration[/dim]")
+    console.print("[dim]• Top 1: % of commits by top contributor. >50% = bus factor risk[/dim]")
 
 
 def _display_npm_results(df):

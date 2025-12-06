@@ -70,6 +70,30 @@ uv run risk-tool scan-npm --limit 500 --min-downloads 100000
 uv run risk-tool scan-npm --limit 100 --no-cache
 ```
 
+#### 1c. Scan PyPI packages
+
+```bash
+# Scan top 1000 PyPI packages (uses weekly cache by default)
+uv run risk-tool scan-pypi --limit 1000
+
+# Scan with minimum download filter (monthly downloads)
+uv run risk-tool scan-pypi --limit 500 --min-downloads 500000
+
+# Force fresh data (skip cache)
+uv run risk-tool scan-pypi --limit 100 --no-cache
+```
+
+#### 1d. Scan both NPM and PyPI (recommended)
+
+```bash
+# Use the convenience script to scan both registries
+./parallel_scan.sh $GITHUB_TOKEN all 500
+
+# Or scan them separately
+uv run risk-tool scan-npm --limit 500 --min-downloads 50000
+uv run risk-tool scan-pypi --limit 500 --min-downloads 500000
+```
+
 #### 2. Explore results
 
 ```bash
@@ -176,9 +200,9 @@ sqlite3 risk_report.db "SELECT repo, risk_level FROM risk_report WHERE risk_leve
 
 ```
 src/
-├── cli.py          # Typer CLI commands (scan, scan-npm, explore)
+├── cli.py          # Typer CLI commands (scan, scan-npm, scan-pypi, explore)
 ├── ingestion.py    # Async GitHub API client
-├── npm_client.py   # NPM Registry client with caching
+├── npm_client.py   # NPM & PyPI Registry clients with caching
 ├── processing.py   # Risk metric calculations (Gini, etc.)
 └── explorer.py     # Textual TUI application
 ```
@@ -189,6 +213,12 @@ src/
 - **GitHub-only**: Packages hosted on GitLab, Bitbucket, or other platforms are skipped
 - **Repository detection**: Some packages have malformed or missing repository URLs
 - **Download counts**: Weekly downloads may be delayed by ~24 hours
+
+### PyPI Package Scanning
+- **GitHub-only**: Packages hosted on GitLab, Bitbucket, or other platforms are skipped
+- **Repository detection**: Relies on package metadata (`project_urls`, `home_page`)
+- **Download counts**: Uses 30-day download statistics from top-pypi-packages dataset
+- **Data source**: Uses [hugovk/top-pypi-packages](https://hugovk.github.io/top-pypi-packages/) for popularity data
 
 ### General
 - **GitHub API rate limits**: 5,000 requests/hour with authentication
