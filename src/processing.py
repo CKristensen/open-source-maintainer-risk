@@ -55,6 +55,9 @@ def compute_risk_metrics(raw_results: List) -> pl.DataFrame:
     """
     Transforms raw API responses into a structured Risk Scorecard.
     Uses Gini Coefficient to measure contribution concentration (bus factor).
+    
+    Supports enriched data from package registries (NPM, PyPI, Maven, etc.)
+    with optional fields: package_name, weekly_downloads, registry.
     """
     # 1. Filter valid data and compute Gini + top contributor shares
     valid_records = []
@@ -74,7 +77,7 @@ def compute_risk_metrics(raw_results: List) -> pl.DataFrame:
                 top_shares = {"top1_share": None, "top3_share": None}
                 contributor_count = None
             
-            valid_records.append({
+            record = {
                 "repo": r["repo"],
                 "language": r.get("language", "Unknown"),
                 "all_commits": r["data"]["all"],
@@ -83,7 +86,17 @@ def compute_risk_metrics(raw_results: List) -> pl.DataFrame:
                 "gini_coefficient": gini,
                 "top1_share": top_shares["top1_share"],
                 "top3_share": top_shares["top3_share"],
-            })
+            }
+            
+            # Optional package registry fields (NPM, PyPI, Maven, etc.)
+            if "package_name" in r:
+                record["package_name"] = r["package_name"]
+            if "weekly_downloads" in r:
+                record["weekly_downloads"] = r["weekly_downloads"]
+            if "registry" in r:
+                record["registry"] = r["registry"]
+            
+            valid_records.append(record)
     
     if not valid_records:
         return pl.DataFrame()

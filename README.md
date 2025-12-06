@@ -57,6 +57,19 @@ uv run risk-tool scan --query "org:vercel" --limit 100
 uv run risk-tool scan --query "stars:>10000" --limit 20
 ```
 
+#### 1b. Scan NPM packages
+
+```bash
+# Scan top 1000 NPM packages (uses weekly cache by default)
+uv run risk-tool scan-npm --limit 1000
+
+# Scan with minimum download filter
+uv run risk-tool scan-npm --limit 500 --min-downloads 100000
+
+# Force fresh data (skip cache)
+uv run risk-tool scan-npm --limit 100 --no-cache
+```
+
 #### 2. Explore results
 
 ```bash
@@ -163,11 +176,24 @@ sqlite3 risk_report.db "SELECT repo, risk_level FROM risk_report WHERE risk_leve
 
 ```
 src/
-├── cli.py          # Typer CLI commands (scan, explore)
+├── cli.py          # Typer CLI commands (scan, scan-npm, explore)
 ├── ingestion.py    # Async GitHub API client
+├── npm_client.py   # NPM Registry client with caching
 ├── processing.py   # Risk metric calculations (Gini, etc.)
 └── explorer.py     # Textual TUI application
 ```
+
+## ⚠️ Limitations
+
+### NPM Package Scanning
+- **GitHub-only**: Packages hosted on GitLab, Bitbucket, or other platforms are skipped
+- **Repository detection**: Some packages have malformed or missing repository URLs
+- **Download counts**: Weekly downloads may be delayed by ~24 hours
+
+### General
+- **GitHub API rate limits**: 5,000 requests/hour with authentication
+- **Statistics computation**: GitHub may return 202 (pending) for recently active repos
+- **Contributor data**: Some repos may not have contributor statistics available
 
 ## 📦 Dependencies
 
