@@ -26,6 +26,7 @@ HELP_TEXT = """\
   [yellow]s[/]          Sort by risk score
   [yellow]c[/]          Sort by contributor count
   [yellow]n[/]          Sort by repo name
+  [yellow]w[/]          Sort by weekly downloads
 
 [bold]Views:[/]
   [yellow]d[/]          Toggle detail panel
@@ -37,13 +38,14 @@ HELP_TEXT = """\
   [yellow]q[/]          Quit
 
 [bold cyan]Risk Metrics Explained:[/]
+  [yellow]Source[/]        Where the repo was found (NPM, GH = GitHub search)
+  [yellow]Downloads[/]     Weekly package downloads (if from registry)
   [yellow]Risk Score[/]    Combined score (higher = riskier)
   [yellow]Velocity[/]      Recent vs older commits (>1x = growing)
   [yellow]Gini[/]          Contribution inequality (0-1, higher = concentrated)
-  [yellow]Top1/Top3%[/]    % of commits by top contributors
+  [yellow]Top1%[/]         % of commits by top contributor
   [yellow]Contributors[/]  Total unique contributors
   [yellow]Commits(1Y)[/]   Total commits in last 52 weeks
-  [yellow]Recent(3M)[/]    Commits in last 13 weeks
 
 [dim]Press any key to close[/]
 """
@@ -153,6 +155,7 @@ class RiskExplorer(App):
         Binding("c", "sort_contributors", "Sort Contributors"),
         Binding("s", "sort_score", "Sort Score"),
         Binding("n", "sort_name", "Sort Name"),
+        Binding("w", "sort_downloads", "Sort Downloads"),
         Binding("j", "cursor_down", "Down", show=False),
         Binding("k", "cursor_up", "Up", show=False),
         Binding("g", "cursor_top", "Top", show=False),
@@ -199,7 +202,8 @@ class RiskExplorer(App):
             cursor = conn.execute("""
                 SELECT repo, language, total_risk_score, risk_level, velocity_ratio, 
                        gini_coefficient, top1_share, top3_share, contributor_count,
-                       total_commits, recent_commits, updated_at
+                       total_commits, recent_commits, updated_at,
+                       weekly_downloads, registry, package_name
                 FROM risk_report
                 ORDER BY total_risk_score DESC
             """)
@@ -220,15 +224,15 @@ class RiskExplorer(App):
         
         table.add_column("Repository", key="repo", width=35)
         table.add_column("Lang", key="lang", width=12)
+        table.add_column("Source", key="source", width=6)
+        table.add_column("Downloads", key="downloads", width=10)
         table.add_column("Risk", key="score", width=6)
         table.add_column("Level", key="level", width=10)
         table.add_column("Velocity", key="velocity", width=10)
         table.add_column("Gini", key="gini", width=8)
         table.add_column("Top1%", key="top1", width=8)
-        table.add_column("Top3%", key="top3", width=8)
         table.add_column("Contributors", key="contrib", width=10)
         table.add_column("Commits(1Y)", key="commits", width=11)
-        table.add_column("Recent(3M)", key="recent", width=11)
     
     def refresh_table(self) -> None:
         """Refresh the table with current filtered data."""
@@ -250,23 +254,37 @@ class RiskExplorer(App):
             gini_str = f"{gini:.2f}" if gini is not None else "N/A"
             top1 = row.get('top1_share')
             top1_str = f"{top1:.0%}" if top1 is not None else "N/A"
-            top3 = row.get('top3_share')
-            top3_str = f"{top3:.0%}" if top3 is not None else "N/A"
             contrib = row.get('contributor_count')
-            contrib_str = (str(contrib) if int(contrib) != 100 else ">100") if contrib is not None else "?" 
+            contrib_str = (str(contrib) if int(contrib) != 100 else ">100") if contrib is not None else "?"
+            
+            # Format downloads (weekly)
+            downloads = row.get('weekly_downloads')
+            if downloads is not None and downloads > 0:
+                if downloads >= 1_000_000:
+                    dl_str = f"{downloads / 1_000_000:.1f}M"
+                elif downloads >= 1_000:
+                    dl_str = f"{downloads / 1_000:.0f}K"
+                else:
+                    dl_str = str(downloads)
+            else:
+                dl_str = "-"
+            
+            # Source (registry)
+            registry = row.get('registry')
+            source_str = registry.upper() if registry else "GH"
             
             table.add_row(
                 row.get("repo", "?"),
                 row.get("language", "?"),
+                source_str,
+                dl_str,
                 f"{row.get('total_risk_score', 0):.1f}",
                 level_styled,
                 f"{row.get('velocity_ratio', 0):.2f}x",
                 gini_str,
                 top1_str,
-                top3_str,
                 contrib_str,
                 str(row.get("total_commits", "?")),
-                str(row.get("recent_commits", "?")),
             )
         
         # Update stats
@@ -326,11 +344,28 @@ class RiskExplorer(App):
         top3 = row.get('top3_share')
         top3_str = f"{top3:.1%}" if top3 is not None else "N/A"
         
+        # Format downloads for detail
+        downloads = row.get('weekly_downloads')
+        if downloads is not None and downloads > 0:
+            if downloads >= 1_000_000:
+                dl_str = f"{downloads / 1_000_000:.1f}M/wk"
+            elif downloads >= 1_000:
+                dl_str = f"{downloads / 1_000:.0f}K/wk"
+            else:
+                dl_str = f"{downloads}/wk"
+        else:
+            dl_str = "N/A"
+        
+        registry = row.get('registry')
+        pkg_name = row.get('package_name')
+        source_str = f"{registry.upper()}: {pkg_name}" if registry and pkg_name else "GitHub only"
+        
         detail.update(
-            f"[bold cyan]{row.get('repo', '?')}[/]\n"
+            f"[bold cyan]{row.get('repo', '?')}[/] [dim]({source_str})[/]\n"
             f"Risk Score: {row.get('total_risk_score', 0):.1f} ({row.get('risk_level', '?')}) | "
             f"Velocity: {row.get('velocity_ratio', 0):.2f}x | "
-            f"Gini: {gini_str}\n"
+            f"Gini: {gini_str} | "
+            f"Downloads: {dl_str}\n"
             f"Contributors: {contrib_str} | "
             f"Total Commits: {row.get('total_commits', '?')} | "
             f"Recent Commits: {row.get('recent_commits', '?')}\n"
@@ -405,6 +440,15 @@ class RiskExplorer(App):
         else:
             self.sort_column = "repo"
             self.sort_reverse = False
+        self.refresh_table()
+    
+    def action_sort_downloads(self) -> None:
+        """Sort by weekly downloads."""
+        if self.sort_column == "weekly_downloads":
+            self.sort_reverse = not self.sort_reverse
+        else:
+            self.sort_column = "weekly_downloads"
+            self.sort_reverse = True
         self.refresh_table()
     
     def action_show_help(self) -> None:

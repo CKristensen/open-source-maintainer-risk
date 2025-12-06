@@ -1,28 +1,29 @@
 #!/bin/bash
-# Parallel scan script - runs 5 scans for popular languages simultaneously
-# Usage: ./parallel_scan.sh <github_token>
+# NPM scan script - fetches top NPM packages and analyzes maintainer risk
+# Usage: ./parallel_scan.sh [github_token] [limit] [min_downloads]
 
 TOKEN="${1:-$GITHUB_TOKEN}"
+LIMIT="${2:-1000}"
+MIN_DOWNLOADS="${3:-10000}"
 
 if [ -z "$TOKEN" ]; then
     echo "Error: GitHub token required. Pass as argument or set GITHUB_TOKEN env var."
-    echo "Usage: ./parallel_scan.sh <github_token>"
+    echo "Usage: ./parallel_scan.sh <github_token> [limit] [min_downloads]"
+    echo ""
+    echo "Options:"
+    echo "  limit         Number of top NPM packages to scan (default: 1000)"
+    echo "  min_downloads Minimum weekly downloads filter (default: 10000)"
     exit 1
 fi
 
-echo "Starting parallel scans for top 5 languages (stars:>2000, limit 1000)..."
+echo "Starting NPM package scan..."
+echo "  Limit: $LIMIT packages"
+echo "  Min downloads: $MIN_DOWNLOADS/week"
 echo "============================================================"
 
-# Run 5 scans in parallel using background processes
-uv run risk-tool scan --token "$TOKEN" --limit 1000 --query "language:python stars:>2000" &
-uv run risk-tool scan --token "$TOKEN" --limit 1000 --query "language:javascript stars:>2000" &
-uv run risk-tool scan --token "$TOKEN" --limit 1000 --query "language:typescript stars:>2000" &
-uv run risk-tool scan --token "$TOKEN" --limit 1000 --query "language:go stars:>2000" &
-uv run risk-tool scan --token "$TOKEN" --limit 1000 --query "language:rust stars:>2000" &
-
-# Wait for all background jobs to complete
-wait
+# Scan top NPM packages
+uv run risk-tool scan-npm --token "$TOKEN" --limit "$LIMIT" --min-downloads "$MIN_DOWNLOADS"
 
 echo "============================================================"
-echo "All scans complete! Results saved to risk_report.db"
+echo "Scan complete! Results saved to risk_report.db"
 echo "Run 'uv run risk-tool explore' to view results."
