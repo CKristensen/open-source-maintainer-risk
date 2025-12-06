@@ -128,8 +128,8 @@ uv run risk-tool explore
 
 ## 🖥️ Explorer TUI
 
-A k9s-style terminal UI for exploring your risk database:
-<img width="3069" height="2244" alt="image" src="https://github.com/user-attachments/assets/5130edc9-5ab1-4725-accf-7719afc7826f" />
+A terminal UI for exploring your risk database:
+<img width="3260" height="2249" alt="image" src="https://github.com/user-attachments/assets/0206acbc-9b6b-41c1-8e2f-9db9fab7cfa2" />
 
 
 
@@ -154,7 +154,7 @@ A k9s-style terminal UI for exploring your risk database:
 | `o` | Open repo in browser |
 | `q` | Quit |
 
-### Command Mode (k9s style)
+### Command Mode (TUI style)
 
 Press `:` to enter command mode and filter by registry:
 
