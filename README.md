@@ -10,10 +10,12 @@ A CLI tool that analyzes GitHub repositories for **bus factor risk** — identif
 
 ## ✨ Features
 
+- **Multi-Registry Scanning** — NPM, PyPI, and Maven package registries
 - **GitHub Repository Scanning** — Search and analyze repos by org, language, stars, or custom queries
 - **Risk Metrics** — Gini coefficient, velocity ratio, top contributor concentration
 - **Interactive TUI** — k9s-style terminal explorer with filtering, sorting, and details
-- **Parallel Scanning** — Batch scan thousands of repos across multiple languages
+- **Command Mode** — Filter by registry with `:npm`, `:pypi`, `:maven` commands
+- **Parallel Scanning** — Batch scan thousands of repos across multiple registries
 - **SQLite Storage** — Persistent database with automatic deduplication and updates
 - **Rich Output** — Color-coded risk levels with clickable GitHub links
 
@@ -83,15 +85,38 @@ uv run risk-tool scan-pypi --limit 500 --min-downloads 500000
 uv run risk-tool scan-pypi --limit 100 --no-cache
 ```
 
-#### 1d. Scan both NPM and PyPI (recommended)
+#### 1d. Scan Maven packages
 
 ```bash
-# Use the convenience script to scan both registries
-./parallel_scan.sh $GITHUB_TOKEN all 500
+# Requires Libraries.io API key (free at https://libraries.io/api)
+export LIBRARIES_IO_API_KEY=your_key_here
+
+# Scan top 500 Maven packages (uses weekly cache by default)
+uv run risk-tool scan-maven --limit 500
+
+# Scan with minimum dependents filter
+uv run risk-tool scan-maven --limit 500 --min-dependents 1000
+
+# Force fresh data (skip cache)
+uv run risk-tool scan-maven --limit 100 --no-cache
+```
+
+> **Note**: Maven Central doesn't expose download statistics, so we use `dependents_count` from Libraries.io as a popularity metric.
+
+#### 1e. Scan all registries (recommended)
+
+```bash
+# Set required tokens
+export GITHUB_TOKEN=ghp_your_token_here
+export LIBRARIES_IO_API_KEY=your_key_here  # Optional, for Maven
+
+# Use the convenience script to scan all registries in parallel
+./parallel_scan.sh
 
 # Or scan them separately
-uv run risk-tool scan-npm --limit 500 --min-downloads 50000
-uv run risk-tool scan-pypi --limit 500 --min-downloads 500000
+uv run risk-tool scan-npm --limit 1500 --min-downloads 100000
+uv run risk-tool scan-pypi --limit 1500 --min-downloads 500000
+uv run risk-tool scan-maven --limit 500 --min-dependents 1000
 ```
 
 #### 2. Explore results
@@ -118,13 +143,27 @@ A k9s-style terminal UI for exploring your risk database:
 | `g` | Jump to top |
 | `G` | Jump to bottom |
 | `/` | Focus search |
-| `Escape` | Clear search |
+| `:` | Command mode |
+| `Escape` | Clear search & filters |
 | `d` | Toggle detail panel |
 | `s` | Sort by risk score |
 | `c` | Sort by contributors |
 | `n` | Sort by name |
+| `w` | Sort by downloads |
 | `r` | Refresh data |
+| `o` | Open repo in browser |
 | `q` | Quit |
+
+### Command Mode (k9s style)
+
+Press `:` to enter command mode and filter by registry:
+
+| Command | Action |
+|---------|--------|
+| `:npm` | Show only NPM packages |
+| `:pypi` | Show only PyPI packages |
+| `:maven` | Show only Maven packages |
+| `:all` | Show all packages |
 
 ## 📊 Risk Metrics
 
@@ -200,11 +239,11 @@ sqlite3 risk_report.db "SELECT repo, risk_level FROM risk_report WHERE risk_leve
 
 ```
 src/
-├── cli.py          # Typer CLI commands (scan, scan-npm, scan-pypi, explore)
-├── ingestion.py    # Async GitHub API client
-├── npm_client.py   # NPM & PyPI Registry clients with caching
-├── processing.py   # Risk metric calculations (Gini, etc.)
-└── explorer.py     # Textual TUI application
+├── cli.py              # Typer CLI commands (scan, scan-npm, scan-pypi, scan-maven, explore)
+├── ingestion.py        # Async GitHub API client
+├── registry_clients.py # NPM, PyPI & Maven Registry clients with caching
+├── processing.py       # Risk metric calculations (Gini, etc.)
+└── explorer.py         # Textual TUI application
 ```
 
 ## ⚠️ Limitations
@@ -219,6 +258,13 @@ src/
 - **Repository detection**: Relies on package metadata (`project_urls`, `home_page`)
 - **Download counts**: Uses 30-day download statistics from top-pypi-packages dataset
 - **Data source**: Uses [hugovk/top-pypi-packages](https://hugovk.github.io/top-pypi-packages/) for popularity data
+
+### Maven Package Scanning
+- **Requires API key**: Libraries.io API key needed (free at https://libraries.io/api)
+- **GitHub-only**: Packages hosted on GitLab, Bitbucket, or other platforms are skipped
+- **No download counts**: Maven Central doesn't expose download stats; uses `dependents_count` instead
+- **Rate limiting**: Libraries.io free tier allows 60 requests/minute
+- **POM fallback**: For packages without repository URL in Libraries.io, attempts to parse POM files
 
 ### General
 - **GitHub API rate limits**: 5,000 requests/hour with authentication

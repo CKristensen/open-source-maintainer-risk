@@ -1,10 +1,15 @@
 """
-NPM Registry Client for fetching popular packages and mapping to GitHub repos.
+Package Registry Clients for fetching popular packages and mapping to GitHub repos.
 
-This module provides async functionality to:
-1. Search for most popular NPM packages by download count
-2. Extract GitHub repository URLs from package metadata
-3. Cache results to minimize API calls (weekly refresh)
+This module provides async clients for:
+- NPM Registry (JavaScript/TypeScript packages)
+- PyPI (Python packages)
+- Maven Central via Libraries.io (Java/Kotlin packages)
+
+Common functionality:
+- Search for most popular packages by download/dependents count
+- Extract GitHub repository URLs from package metadata
+- Cache results to minimize API calls (weekly refresh)
 """
 
 import asyncio

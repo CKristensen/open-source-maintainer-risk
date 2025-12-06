@@ -9,7 +9,7 @@ from rich import print
 from src.ingestion import GitHubClient
 from src.processing import compute_risk_metrics
 from src.explorer import run_explorer
-from src.npm_client import NPMClient, PyPIClient, MavenClient
+from src.registry_clients import NPMClient, PyPIClient, MavenClient
 
 app = typer.Typer()
 console = Console()
