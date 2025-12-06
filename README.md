@@ -8,18 +8,34 @@ A CLI tool that analyzes GitHub repositories for **bus factor risk** — identif
 ![Python](https://img.shields.io/badge/python-3.13+-green?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-yellow?style=flat-square)
 
+## ✨ Features
+
+- **GitHub Repository Scanning** — Search and analyze repos by org, language, stars, or custom queries
+- **Risk Metrics** — Gini coefficient, velocity ratio, top contributor concentration
+- **Interactive TUI** — k9s-style terminal explorer with filtering, sorting, and details
+- **Parallel Scanning** — Batch scan thousands of repos across multiple languages
+- **SQLite Storage** — Persistent database with automatic deduplication and updates
+- **Rich Output** — Color-coded risk levels with clickable GitHub links
+
 ## 🚀 Quick Start
 
 ### Installation
 
 ```bash
 # Clone the repo
-git clone https://github.com/yourusername/attensi-risk-tool.git
+git clone https://github.com/CKristensen/open-source-maintainer-risk
 cd attensi-risk-tool
 
 # Install with uv (recommended)
 uv sync
 ```
+
+### Quick setup
+# Fill the database with 5000 repos
+sh parallel_scan.sh
+
+# Visualize results
+uv run risk-tool explore
 
 ### Usage
 
@@ -185,6 +201,10 @@ PRs welcome! Some ideas:
 - [ ] GitHub Actions integration
 - [ ] Slack/Discord alerts
 - [ ] Historical trend tracking
+
+## 👤 Author
+
+**Carl Kristensen** — [ghe@cjckris.com](mailto:ghe@cjckris.com)
 
 ## 📄 License
 

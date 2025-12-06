@@ -1,9 +1,36 @@
 [project]
 name = "attensi-risk-tool"
 version = "0.1.0"
-description = "Add your description here"
+description = "A CLI tool that analyzes GitHub repositories for bus factor risk — identifying projects dangerously dependent on a small number of contributors"
 readme = "README.md"
 requires-python = ">=3.13"
+license = "MIT"
+authors = [
+    { name = "Carl Kristensen", email = "ghe@cjckris.com" }
+]
+maintainers = [
+    { name = "Carl Kristensen", email = "ghe@cjckris.com" }
+]
+keywords = [
+    "github",
+    "risk-analysis",
+    "bus-factor",
+    "open-source",
+    "maintainer",
+    "cli",
+    "developer-tools"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+    "Typing :: Typed"
+]
 dependencies = [
     "typer>=0.9.0",
     "httpx>=0.25.0",
@@ -16,6 +43,12 @@ dependencies = [
 ]
 [project.scripts]
 risk-tool = "src.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/cjckris/attensi-risk-tool"
+Repository = "https://github.com/cjckris/attensi-risk-tool"
+Documentation = "https://github.com/cjckris/attensi-risk-tool#readme"
+"Bug Tracker" = "https://github.com/cjckris/attensi-risk-tool/issues"
 
 [tool.uv]
 package = true
