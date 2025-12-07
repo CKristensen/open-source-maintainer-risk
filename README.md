@@ -298,7 +298,7 @@ PRs welcome! Some ideas:
 
 ## 👤 Author
 
-**Carl Kristensen** — [ghe@cjckris.com](mailto:ghe@cjckris.com)
+**Carl Kristensen**
 
 ## 📄 License
 
